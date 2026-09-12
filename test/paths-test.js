@@ -34,18 +34,43 @@ const date = new Date(2026, 8, 12, 14, 5, 9)
 assert.strictEqual(Paths.captureName(date, "jpg"), "omasnapshot-20260912-140509.jpg")
 assert.strictEqual(Paths.captureName(date, "mp4"), "omasnapshot-20260912-140509.mp4")
 assert.strictEqual(
+  Paths.captureName(date, "jpg", "a1b2c3d4"),
+  "omasnapshot-20260912-140509-a1b2c3d4.jpg"
+)
+assert.strictEqual(
   Paths.photoPath({ HOME: "/home/colin" }, date),
   "/home/colin/Pictures/omasnapshot-20260912-140509.jpg"
 )
 assert.strictEqual(
-  Paths.videoPath({ HOME: "/home/colin" }, date),
-  "/home/colin/Videos/omasnapshot-20260912-140509.mp4"
+  Paths.videoPath({ HOME: "/home/colin" }, date, "deadbeef"),
+  "/home/colin/Videos/omasnapshot-20260912-140509-deadbeef.mp4"
 )
+
+assert.match(Paths.captureNonce(), /^[0-9a-f]{8}$/)
 
 assert.strictEqual(Paths.fileUrl("/home/colin/Videos/clip.mp4"), "file:///home/colin/Videos/clip.mp4")
 assert.strictEqual(Paths.fileUrl("file:///tmp/a.jpg"), "file:///tmp/a.jpg")
 assert.strictEqual(Paths.localPath("file:///home/colin/Videos/clip.mp4"), "/home/colin/Videos/clip.mp4")
 assert.strictEqual(Paths.localPath("/tmp/a.jpg"), "/tmp/a.jpg")
+
+assert.strictEqual(Paths.usableAbsPath("/home/colin/Pictures"), true)
+assert.strictEqual(Paths.usableAbsPath("/home/colin/Pictures/omasnapshot-1.jpg"), true)
+assert.strictEqual(Paths.usableAbsPath("/home/colin/../etc/passwd"), false)
+assert.strictEqual(Paths.usableAbsPath("/home/colin/foo/./bar"), false)
+assert.strictEqual(Paths.usableAbsPath("relative"), false)
+assert.strictEqual(Paths.usableAbsPath("/tmp/a.jpg\n"), false)
+assert.strictEqual(Paths.usableAbsPath("/foo//bar"), false)
+assert.strictEqual(Paths.pathInside("/home/colin/Pictures/x.jpg", "/home/colin/Pictures"), true)
+assert.strictEqual(Paths.pathInside("/home/colin/Pictures_evil/x.jpg", "/home/colin/Pictures"), false)
+assert.strictEqual(Paths.pathInside("/home/colin/Pictures/../Videos/x.mp4", "/home/colin/Pictures"), false)
+assert.strictEqual(
+  Paths.isCapturePath("photo", "/home/colin/Pictures/omasnapshot-1.jpg", { HOME: "/home/colin" }),
+  true
+)
+assert.strictEqual(
+  Paths.isCapturePath("photo", "/tmp/omasnapshot-1.jpg", { HOME: "/home/colin" }),
+  false
+)
 
 assert.strictEqual(Paths.formatElapsed(0), "00:00")
 assert.strictEqual(Paths.formatElapsed(1000), "00:01")
@@ -57,6 +82,12 @@ assert.strictEqual(
   Paths.toastMessage("photo", "/home/colin/Pictures/omasnapshot-20260912-140509.jpg"),
   "Saved omasnapshot-20260912-140509.jpg"
 )
+assert.strictEqual(
+  Paths.toastMessage("photo", "/home/colin/Pictures/<img src=x>.jpg"),
+  "Saved img src=x.jpg"
+)
+assert.strictEqual(Paths.plain("hello\nworld<script>", 80), "helloworldscript")
+assert.strictEqual(Paths.plain("<img src=\"http://127.0.0.1/x\">", 80), 'img src="http://127.0.0.1/x"')
 assert.strictEqual(
   Paths.displayPath("/home/colin/Pictures/x.jpg", "/home/colin"),
   "~/Pictures/x.jpg"
@@ -80,16 +111,24 @@ assert.strictEqual(Paths.clampGamma(1.04), 1.05)
 assert.strictEqual(Paths.gammaIsNeutral(1), true)
 assert.strictEqual(Paths.gammaIsNeutral(1.5), false)
 assert.strictEqual(Paths.gammaLabel(1.5), "1.50")
-assert.strictEqual(Paths.gammaApplyCommand("photo", "/tmp/a.jpg", 1), null)
+assert.strictEqual(Paths.gammaCommand("/opt/plugin/bin/omasnapshot.py", "photo", "/tmp/a.jpg", 1), null)
 assert.deepStrictEqual(
-  Paths.gammaApplyCommand("photo", "/tmp/a.jpg", 1.5),
-  ["bash", "-c", 'ffmpeg -y -hide_banner -loglevel error -i "$1" -vf "$2" -q:v 2 "$3" && mv -f "$3" "$1"', "omasnapshot-gamma", "/tmp/a.jpg", "eq=gamma=1.5", "/tmp/a.jpg.gamma-tmp.jpg"]
+  Paths.gammaCommand("/opt/plugin/bin/omasnapshot.py", "photo", "/home/colin/Pictures/a.jpg", 1.5),
+  ["/usr/bin/python3", "-I", "-S", "/opt/plugin/bin/omasnapshot.py", "gamma", "photo", "/home/colin/Pictures/a.jpg", "1.50"]
+)
+assert.strictEqual(
+  Paths.gammaCommand("/opt/plugin/bin/omasnapshot.py", "photo", "/home/colin/../etc/passwd", 1.5),
+  null
 )
 assert.deepStrictEqual(
-  Paths.gammaApplyCommand("video", "/tmp/a.mp4", 0.5),
-  ["bash", "-c", 'ffmpeg -y -hide_banner -loglevel error -i "$1" -vf "$2" -c:a copy "$3" && mv -f "$3" "$1"', "omasnapshot-gamma", "/tmp/a.mp4", "eq=gamma=0.5", "/tmp/a.mp4.gamma-tmp.mp4"]
+  Paths.ensureDirCommand("/home/colin/Pictures"),
+  ["/usr/bin/mkdir", "-p", "--", "/home/colin/Pictures"]
 )
-assert.ok(Paths.gammaApplyCommand("photo", "/tmp/a.jpg", 1.5)[6].endsWith(".jpg"))
-assert.ok(Paths.gammaApplyCommand("video", "/tmp/a.mp4", 0.5)[6].endsWith(".mp4"))
+assert.strictEqual(Paths.ensureDirCommand("/home/colin/../Pictures"), null)
+assert.deepStrictEqual(
+  Paths.helperCommand("/opt/plugin/bin/omasnapshot.py", ["read-settings"]),
+  ["/usr/bin/python3", "-I", "-S", "/opt/plugin/bin/omasnapshot.py", "read-settings"]
+)
+assert.strictEqual(Paths.helperCommand("omasnapshot.py", ["read-settings"]), null)
 
 console.log("paths-test ok")

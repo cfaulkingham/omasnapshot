@@ -1,6 +1,11 @@
 // Save locations and capture filenames for OmaSnapshot.
 // Qt-free so it can be unit tested under node.
 
+var PYTHON = "/usr/bin/python3"
+var MKDIR = "/usr/bin/mkdir"
+var MAX_PATH = 4096
+var MAX_PLAIN = 200
+
 function stripSlash(value) {
   var path = String(value || "")
   while (path.length > 1 && path.charAt(path.length - 1) === "/")
@@ -36,28 +41,66 @@ function videosDir(env) {
   return firstPath(env, ["OMARCHY_SCREENRECORD_DIR", "XDG_VIDEOS_DIR"], "/Videos")
 }
 
+function usableAbsPath(path) {
+  var p = String(path || "")
+  if (!p || p.charAt(0) !== "/" || p.length > MAX_PATH)
+    return false
+  if (p.indexOf("\0") !== -1 || p.indexOf("\r") !== -1 || p.indexOf("\n") !== -1)
+    return false
+  var parts = p.split("/")
+  for (var i = 0; i < parts.length; i++) {
+    if (i === 0 && parts[i] === "")
+      continue
+    if (!parts[i] || parts[i] === "." || parts[i] === "..")
+      return false
+  }
+  return true
+}
+
+function pathInside(path, dir) {
+  var p = stripSlash(String(path || ""))
+  var d = stripSlash(String(dir || ""))
+  if (!usableAbsPath(p) || !usableAbsPath(d))
+    return false
+  return p === d || p.indexOf(d + "/") === 0
+}
+
+function isCapturePath(kind, path, env) {
+  var dir = kind === "video" ? videosDir(env) : picturesDir(env)
+  return pathInside(path, dir)
+}
+
 function pad2(n) {
   n = Math.floor(Number(n) || 0)
   if (n < 0) n = 0
   return n < 10 ? "0" + n : String(n)
 }
 
-function captureName(date, ext) {
+function captureNonce() {
+  var n = Math.floor(Math.random() * 0x100000000)
+  var s = n.toString(16)
+  while (s.length < 8)
+    s = "0" + s
+  return s
+}
+
+function captureName(date, ext, nonce) {
   var y = date.getFullYear()
   var m = pad2(date.getMonth() + 1)
   var d = pad2(date.getDate())
   var h = pad2(date.getHours())
   var min = pad2(date.getMinutes())
   var s = pad2(date.getSeconds())
-  return "omasnapshot-" + y + m + d + "-" + h + min + s + "." + ext
+  var extra = nonce ? "-" + String(nonce) : ""
+  return "omasnapshot-" + y + m + d + "-" + h + min + s + extra + "." + ext
 }
 
-function photoPath(env, date) {
-  return picturesDir(env) + "/" + captureName(date, "jpg")
+function photoPath(env, date, nonce) {
+  return picturesDir(env) + "/" + captureName(date, "jpg", nonce)
 }
 
-function videoPath(env, date) {
-  return videosDir(env) + "/" + captureName(date, "mp4")
+function videoPath(env, date, nonce) {
+  return videosDir(env) + "/" + captureName(date, "mp4", nonce)
 }
 
 function fileUrl(path) {
@@ -90,10 +133,32 @@ function formatElapsed(ms) {
   return pad2(minutes) + ":" + pad2(seconds)
 }
 
+function plain(value, maxLen) {
+  var limit = Number(maxLen)
+  if (!isFinite(limit) || limit <= 0)
+    limit = MAX_PLAIN
+  var s = String(value || "")
+  var out = ""
+  for (var i = 0; i < s.length && out.length < limit; i++) {
+    var c = s.charCodeAt(i)
+    var ch = s.charAt(i)
+    if (c < 32 || c === 127 || (c >= 0x80 && c <= 0x9f))
+      continue
+    if (c >= 0x202a && c <= 0x202e)
+      continue
+    if (c >= 0x2066 && c <= 0x2069)
+      continue
+    if (ch === "<" || ch === ">" || ch === "&")
+      continue
+    out += ch
+  }
+  return out
+}
+
 function toastMessage(kind, path) {
   var parts = String(path || "").split("/")
   var name = parts[parts.length - 1] || "capture"
-  return "Saved " + name
+  return "Saved " + plain(name, 80)
 }
 
 function displayPath(path, home) {
@@ -131,28 +196,46 @@ function gammaLabel(value) {
   return clampGamma(value).toFixed(2)
 }
 
-function gammaApplyCommand(kind, path, gamma) {
-  if (gammaIsNeutral(gamma)) return null
-  var source = String(path || "")
-  if (!source) return null
-  var tmp = kind === "video" ? source + ".gamma-tmp.mp4" : source + ".gamma-tmp.jpg"
-  var vf = "eq=gamma=" + String(clampGamma(gamma))
-  var script = kind === "video"
-    ? 'ffmpeg -y -hide_banner -loglevel error -i "$1" -vf "$2" -c:a copy "$3" && mv -f "$3" "$1"'
-    : 'ffmpeg -y -hide_banner -loglevel error -i "$1" -vf "$2" -q:v 2 "$3" && mv -f "$3" "$1"'
-  return ["bash", "-c", script, "omasnapshot-gamma", source, vf, tmp]
+function helperCommand(helperPath, args) {
+  if (!usableAbsPath(helperPath))
+    return null
+  var cmd = [PYTHON, "-I", "-S", helperPath]
+  for (var i = 0; i < args.length; i++)
+    cmd.push(String(args[i]))
+  return cmd
+}
+
+function gammaCommand(helperPath, kind, path, gamma) {
+  if (gammaIsNeutral(gamma))
+    return null
+  if (kind !== "photo" && kind !== "video")
+    return null
+  if (!usableAbsPath(path))
+    return null
+  return helperCommand(helperPath, ["gamma", kind, path, gammaLabel(gamma)])
+}
+
+function ensureDirCommand(dir) {
+  if (!usableAbsPath(dir))
+    return null
+  return [MKDIR, "-p", "--", dir]
 }
 
 if (typeof module !== "undefined") {
   module.exports = {
     picturesDir: picturesDir,
     videosDir: videosDir,
+    usableAbsPath: usableAbsPath,
+    pathInside: pathInside,
+    isCapturePath: isCapturePath,
+    captureNonce: captureNonce,
     captureName: captureName,
     photoPath: photoPath,
     videoPath: videoPath,
     fileUrl: fileUrl,
     localPath: localPath,
     formatElapsed: formatElapsed,
+    plain: plain,
     toastMessage: toastMessage,
     displayPath: displayPath,
     canTakePhoto: canTakePhoto,
@@ -161,6 +244,8 @@ if (typeof module !== "undefined") {
     clampGamma: clampGamma,
     gammaIsNeutral: gammaIsNeutral,
     gammaLabel: gammaLabel,
-    gammaApplyCommand: gammaApplyCommand
+    helperCommand: helperCommand,
+    gammaCommand: gammaCommand,
+    ensureDirCommand: ensureDirCommand
   }
 }

@@ -9,6 +9,8 @@ Item {
 
   property var env: ({})
   property var videoOutput: null
+  property var helperEnvironment: ({ "PATH": "/usr/bin:/bin", "LC_ALL": "C" })
+  property string helperPath: ""
   property bool sessionActive: false
   property real gamma: 1
 
@@ -39,31 +41,48 @@ Item {
   property string pendingGammaKind: ""
   property string pendingGammaPath: ""
   property bool applyingGamma: false
+  property bool micArmed: false
+  property string gammaBuf: ""
 
   signal saved(string kind, string path)
   signal failed(string message)
 
   function finishSave(kind, path) {
-    var cmd = Paths.gammaApplyCommand(kind, path, root.gamma)
+    if (!Paths.isCapturePath(kind, path, root.env)) {
+      root.failed("Could not save capture")
+      return
+    }
+    var cmd = Paths.gammaCommand(root.helperPath, kind, path, root.gamma)
     if (!cmd) {
       root.saved(kind, path)
       return
     }
+    if (gammaProc.running) {
+      gammaProc.signal(15)
+      gammaKill.restart()
+    }
     root.pendingGammaKind = kind
     root.pendingGammaPath = path
     root.applyingGamma = true
+    root.gammaBuf = ""
     gammaProc.command = cmd
     gammaProc.running = true
+    gammaDeadline.restart()
   }
 
   function ensureDirs() {
-    Quickshell.execDetached(["mkdir", "-p", Paths.picturesDir(root.env)])
-    Quickshell.execDetached(["mkdir", "-p", Paths.videosDir(root.env)])
+    var pic = Paths.ensureDirCommand(Paths.picturesDir(root.env))
+    var vid = Paths.ensureDirCommand(Paths.videosDir(root.env))
+    if (pic)
+      Quickshell.execDetached(pic)
+    if (vid)
+      Quickshell.execDetached(vid)
   }
 
   function startSession() {
     root.pendingVideoPath = ""
     root.pendingPhotoPath = ""
+    root.micArmed = false
     root.ensureDirs()
     if (mediaDevices.defaultVideoInput && mediaDevices.defaultVideoInput.id)
       camera.cameraDevice = mediaDevices.defaultVideoInput
@@ -77,7 +96,12 @@ Item {
   function stopSession() {
     if (root.recording)
       recorder.stop()
+    root.micArmed = false
     camera.active = false
+    if (gammaProc.running) {
+      gammaProc.signal(15)
+      gammaKill.restart()
+    }
   }
 
   function takePhoto() {
@@ -90,7 +114,12 @@ Item {
         root.failed("Camera is not ready")
       return false
     }
-    root.pendingPhotoPath = Paths.photoPath(root.env, new Date())
+    var path = Paths.photoPath(root.env, new Date(), Paths.captureNonce())
+    if (!Paths.isCapturePath("photo", path, root.env)) {
+      root.failed("Could not save photo")
+      return false
+    }
+    root.pendingPhotoPath = path
     imageCapture.captureToFile(root.pendingPhotoPath)
     return true
   }
@@ -108,7 +137,13 @@ Item {
       root.failed("No microphone found")
       return false
     }
-    root.pendingVideoPath = Paths.videoPath(root.env, new Date())
+    var path = Paths.videoPath(root.env, new Date(), Paths.captureNonce())
+    if (!Paths.isCapturePath("video", path, root.env)) {
+      root.failed("Could not save video")
+      return false
+    }
+    root.pendingVideoPath = path
+    root.micArmed = true
     recorder.outputLocation = Paths.fileUrl(root.pendingVideoPath)
     recorder.record()
     return true
@@ -121,7 +156,7 @@ Item {
   CaptureSession {
     id: session
     camera: camera
-    audioInput: audioInput
+    audioInput: root.micArmed ? audioInput : null
     imageCapture: imageCapture
     recorder: recorder
     videoOutput: root.videoOutput
@@ -146,7 +181,8 @@ Item {
     fileFormat: ImageCapture.JPEG
     quality: ImageCapture.HighQuality
     onImageSaved: function(id, fileName) {
-      root.finishSave("photo", fileName || root.pendingPhotoPath)
+      var path = Paths.localPath(fileName || root.pendingPhotoPath)
+      root.finishSave("photo", path)
     }
     onErrorOccurred: function(id, error, errorString) {
       if (errorString)
@@ -158,8 +194,12 @@ Item {
     id: recorder
     quality: MediaRecorder.HighQuality
     onRecorderStateChanged: function(state) {
+      if (state !== MediaRecorder.RecordingState)
+        root.micArmed = false
       if (root.lastRecorderState === MediaRecorder.RecordingState && state === MediaRecorder.StoppedState) {
         var path = Paths.localPath(recorder.actualLocation ? recorder.actualLocation.toString() : root.pendingVideoPath)
+        if (!path)
+          path = root.pendingVideoPath
         if (path)
           root.finishSave("video", path)
       }
@@ -173,17 +213,54 @@ Item {
 
   Process {
     id: gammaProc
+    clearEnvironment: true
+    environment: root.helperEnvironment
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        root.gammaBuf += chunk
+        if (root.gammaBuf.length > 4096) {
+          root.gammaBuf = ""
+          gammaProc.signal(15)
+          gammaKill.restart()
+        }
+      }
+    }
+    stderr: SplitParser {
+      splitMarker: ""
+      onRead: function() {}
+    }
     onExited: function(exitCode) {
+      gammaDeadline.stop()
+      gammaKill.stop()
       var kind = root.pendingGammaKind
       var path = root.pendingGammaPath
       root.applyingGamma = false
       root.pendingGammaKind = ""
       root.pendingGammaPath = ""
-      if (path)
+      root.gammaBuf = ""
+      if (path && Paths.isCapturePath(kind, path, root.env))
         root.saved(kind, path)
       if (exitCode !== 0)
         root.failed("Could not apply gamma")
     }
+  }
+
+  Timer {
+    id: gammaDeadline
+    interval: 200000
+    onTriggered: {
+      if (gammaProc.running) {
+        gammaProc.signal(15)
+        gammaKill.restart()
+      }
+    }
+  }
+
+  Timer {
+    id: gammaKill
+    interval: 2000
+    onTriggered: if (gammaProc.running) gammaProc.signal(9)
   }
 
   onSessionActiveChanged: {
@@ -191,5 +268,14 @@ Item {
       root.startSession()
     else
       root.stopSession()
+  }
+
+  Component.onDestruction: {
+    if (gammaProc.running) {
+      gammaProc.signal(15)
+      gammaProc.signal(9)
+    }
+    root.micArmed = false
+    camera.active = false
   }
 }

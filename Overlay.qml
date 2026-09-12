@@ -24,6 +24,11 @@ Item {
   property string videosOverride: Quickshell.env("OMARCHY_SCREENRECORD_DIR") || ""
   property string xdgPictures: Quickshell.env("XDG_PICTURES_DIR") || ""
   property string xdgVideos: Quickshell.env("XDG_VIDEOS_DIR") || ""
+  property string settingsBuf: ""
+  property string xdgBuf: ""
+  property real persistedGamma: -1
+  property int settingsWriteFails: 0
+  property bool settingsReady: false
 
   readonly property var pathEnv: ({
     HOME: root.homeDir,
@@ -33,6 +38,27 @@ Item {
     XDG_VIDEOS_DIR: root.xdgVideos
   })
   readonly property string pluginId: (root.manifest && root.manifest.id) || "io.github.cfaulkingham.omasnapshot"
+  readonly property string helperPath: {
+    var dir = ""
+    if (root.manifest && root.manifest.__sourceDir)
+      dir = Paths.localPath(String(root.manifest.__sourceDir))
+    else
+      dir = Paths.localPath(String(Qt.resolvedUrl(".")))
+    while (dir.length > 1 && dir.charAt(dir.length - 1) === "/")
+      dir = dir.slice(0, -1)
+    return dir + "/bin/omasnapshot.py"
+  }
+  readonly property var helperEnvironment: {
+    var env = {
+      "HOME": root.homeDir,
+      "PATH": "/usr/bin:/bin",
+      "LC_ALL": "C"
+    }
+    var rt = Quickshell.env("XDG_RUNTIME_DIR")
+    if (rt)
+      env["XDG_RUNTIME_DIR"] = rt
+    return env
+  }
   readonly property color background: Color.menu.background
   readonly property color foreground: Color.menu.text
   readonly property color border: Color.menu.border
@@ -99,8 +125,32 @@ Item {
     root.dismiss()
   }
 
+  function startHelper(proc, args, bufName) {
+    var cmd = Paths.helperCommand(root.helperPath, args)
+    if (!cmd)
+      return false
+    if (proc.running) {
+      proc.signal(15)
+      proc.signal(9)
+    }
+    if (bufName === "settings")
+      root.settingsBuf = ""
+    else if (bufName === "xdg")
+      root.xdgBuf = ""
+    proc.command = cmd
+    proc.running = true
+    helperDeadline.restart()
+    return true
+  }
+
   function persistGamma() {
-    settingsFile.setText(JSON.stringify({ gamma: Paths.clampGamma(root.gamma) }) + "\n")
+    var value = Paths.clampGamma(root.gamma)
+    root.gamma = value
+    if (!root.settingsReady || settingsRead.running)
+      return
+    if (value === root.persistedGamma)
+      return
+    root.startHelper(settingsWrite, ["write-settings", Paths.gammaLabel(value)], "settings")
   }
 
   function nudgeGamma(delta) {
@@ -108,27 +158,34 @@ Item {
     root.persistGamma()
   }
 
-  FileView {
-    id: settingsFile
-    path: root.homeDir + "/.config/omarchy/omasnapshot.json"
-    watchChanges: false
-    atomicWrites: true
-    printErrors: false
-    onLoaded: {
-      try {
-        var data = JSON.parse(text() || "{}")
-        root.gamma = Paths.clampGamma(data.gamma)
-      } catch (e) {
-        root.gamma = 1
-      }
+  function applySettings(raw) {
+    try {
+      var data = JSON.parse(raw)
+      root.gamma = Paths.clampGamma(data.gamma)
+      root.persistedGamma = root.gamma
+    } catch (e) {
+      root.gamma = 1
+      root.persistedGamma = 1
     }
-    onLoadFailed: root.gamma = 1
+  }
+
+  function applyXdgDirs(raw) {
+    try {
+      var data = JSON.parse(raw)
+      if (typeof data.pictures === "string" && Paths.usableAbsPath(data.pictures))
+        root.xdgPictures = data.pictures
+      if (typeof data.videos === "string" && Paths.usableAbsPath(data.videos))
+        root.xdgVideos = data.videos
+    } catch (e) {
+    }
   }
 
   CameraSession {
     id: session
     env: root.pathEnv
     gamma: root.gamma
+    helperPath: root.helperPath
+    helperEnvironment: root.helperEnvironment
     videoOutput: preview
     onSaved: function(kind, path) {
       root.showToast(kind, path)
@@ -138,7 +195,7 @@ Item {
         Qt.callLater(root.dismiss)
     }
     onFailed: function(message) {
-      root.toast = message
+      root.toast = Paths.plain(message, 160)
       toastTimer.restart()
     }
     onRecordingChanged: {
@@ -153,29 +210,107 @@ Item {
     onTriggered: root.toast = ""
   }
 
+  Timer {
+    id: helperKill
+    interval: 2000
+    onTriggered: {
+      if (settingsRead.running) settingsRead.signal(9)
+      if (settingsWrite.running) settingsWrite.signal(9)
+      if (xdgDirs.running) xdgDirs.signal(9)
+    }
+  }
+
+  Timer {
+    id: helperDeadline
+    interval: 8000
+    onTriggered: {
+      if (settingsRead.running) settingsRead.signal(15)
+      if (settingsWrite.running) settingsWrite.signal(15)
+      if (xdgDirs.running) xdgDirs.signal(15)
+      helperKill.restart()
+    }
+  }
+
   Process {
-    command: ["xdg-user-dir", "PICTURES"]
-    running: root.picturesOverride === "" && root.xdgPictures === ""
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var value = String(text || "").trim()
-        if (value)
-          root.xdgPictures = value
+    id: settingsRead
+    clearEnvironment: true
+    environment: root.helperEnvironment
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        root.settingsBuf += chunk
+        if (root.settingsBuf.length > 4096) {
+          root.settingsBuf = ""
+          settingsRead.signal(15)
+          helperKill.restart()
+        }
+      }
+    }
+    stderr: SplitParser { splitMarker: ""; onRead: function() {} }
+    onExited: function(exitCode) {
+      helperDeadline.stop()
+      var raw = root.settingsBuf
+      root.settingsBuf = ""
+      root.settingsReady = true
+      if (exitCode === 0)
+        root.applySettings(raw)
+      if (Paths.clampGamma(root.gamma) !== root.persistedGamma)
+        Qt.callLater(root.persistGamma)
+    }
+  }
+
+  Process {
+    id: settingsWrite
+    clearEnvironment: true
+    environment: root.helperEnvironment
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        root.settingsBuf += chunk
+        if (root.settingsBuf.length > 4096) {
+          root.settingsBuf = ""
+          settingsWrite.signal(15)
+          helperKill.restart()
+        }
+      }
+    }
+    stderr: SplitParser { splitMarker: ""; onRead: function() {} }
+    onExited: function(exitCode) {
+      helperDeadline.stop()
+      var raw = root.settingsBuf
+      root.settingsBuf = ""
+      if (exitCode === 0) {
+        root.settingsWriteFails = 0
+        root.applySettings(raw)
+      } else if (root.settingsWriteFails < 3 && Paths.clampGamma(root.gamma) !== root.persistedGamma) {
+        root.settingsWriteFails += 1
+        Qt.callLater(root.persistGamma)
       }
     }
   }
 
   Process {
-    command: ["xdg-user-dir", "VIDEOS"]
-    running: root.videosOverride === "" && root.xdgVideos === ""
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var value = String(text || "").trim()
-        if (value)
-          root.xdgVideos = value
+    id: xdgDirs
+    clearEnvironment: true
+    environment: root.helperEnvironment
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(chunk) {
+        root.xdgBuf += chunk
+        if (root.xdgBuf.length > 4096) {
+          root.xdgBuf = ""
+          xdgDirs.signal(15)
+          helperKill.restart()
+        }
       }
+    }
+    stderr: SplitParser { splitMarker: ""; onRead: function() {} }
+    onExited: function(exitCode) {
+      helperDeadline.stop()
+      var raw = root.xdgBuf
+      root.xdgBuf = ""
+      if (exitCode === 0)
+        root.applyXdgDirs(raw)
     }
   }
 
@@ -257,6 +392,7 @@ Item {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
             text: "Esc"
+            textFormat: Text.PlainText
             color: root.foreground
             opacity: 0.7
             font.family: root.fontFamily
@@ -292,6 +428,7 @@ Item {
 
             Text {
               text: "REC  " + session.elapsedText
+              textFormat: Text.PlainText
               color: Color.urgent
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -302,7 +439,8 @@ Item {
           Text {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: session.cameraName
+            text: Paths.plain(session.cameraName, 80)
+            textFormat: Text.PlainText
             color: root.foreground
             opacity: 0.62
             font.family: root.fontFamily
@@ -357,7 +495,8 @@ Item {
           Text {
             anchors.centerIn: parent
             visible: session.errorText !== "" || !session.hasCamera
-            text: session.errorText || "No camera found"
+            text: Paths.plain(session.errorText || "No camera found", 160)
+            textFormat: Text.PlainText
             color: "white"
             font.family: root.fontFamily
             font.pixelSize: Style.font.title
@@ -368,7 +507,8 @@ Item {
         Text {
           width: parent.width
           height: Style.font.body + Style.space(2)
-          text: session.applyingGamma ? "Applying gamma…" : root.toast
+          text: session.applyingGamma ? "Applying gamma…" : Paths.plain(root.toast, 160)
+          textFormat: Text.PlainText
           color: root.foreground
           opacity: session.applyingGamma || root.toast !== "" ? 1 : 0
           font.family: root.fontFamily
@@ -385,6 +525,7 @@ Item {
           Text {
             id: gammaName
             text: "Gamma"
+            textFormat: Text.PlainText
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
@@ -426,6 +567,7 @@ Item {
             id: gammaValue
             width: Style.space(36)
             text: Paths.gammaLabel(root.gamma)
+            textFormat: Text.PlainText
             color: root.foreground
             opacity: 0.7
             font.family: root.fontFamily
@@ -507,6 +649,7 @@ Item {
         Text {
           width: parent.width
           text: "Space photo   ·   R record   ·   [ ] gamma   ·   Esc close"
+          textFormat: Text.PlainText
           color: root.foreground
           opacity: 0.58
           font.family: root.fontFamily
@@ -515,5 +658,17 @@ Item {
         }
       }
     }
+  }
+
+  Component.onCompleted: {
+    root.startHelper(settingsRead, ["read-settings"], "settings")
+    if ((root.picturesOverride === "" && root.xdgPictures === "") || (root.videosOverride === "" && root.xdgVideos === ""))
+      root.startHelper(xdgDirs, ["xdg-dirs"], "xdg")
+  }
+
+  Component.onDestruction: {
+    if (settingsRead.running) { settingsRead.signal(15); settingsRead.signal(9) }
+    if (settingsWrite.running) { settingsWrite.signal(15); settingsWrite.signal(9) }
+    if (xdgDirs.running) { xdgDirs.signal(15); xdgDirs.signal(9) }
   }
 }
