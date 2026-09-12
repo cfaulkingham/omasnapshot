@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.cfaulkingham.omasnapshot",
+  "name": "OmaSnapshot",
+  "version": "1.0.0",
+  "author": "Colin Faulkingham",
+  "license": "MIT",
+  "description": "Take a photo or record a video with your webcam from an Omarchy overlay.",
+  "kinds": [
+    "overlay"
+  ],
+  "entryPoints": {
+    "overlay": "Overlay.qml"
+  },
+  "keywords": [
+    "webcam",
+    "camera",
+    "photo",
+    "video",
+    "capture",
+    "microphone"
+  ]
+}
