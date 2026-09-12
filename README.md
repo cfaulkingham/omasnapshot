@@ -1,3 +1,5 @@
+![OmaSnapshot — Take a photo. Record a video. Stay on the desktop. Webcam overlay for Omarchy.](preview.png)
+
 # OmaSnapshot
 
 Take a photo or record a video with your webcam from a floating Omarchy overlay.
