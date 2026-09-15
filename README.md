@@ -29,6 +29,9 @@ and binds **Super+Alt+C**. Super+Shift+C is already Calendar.
 blocks. It reloads Hyprland and rolls those files back if `hyprctl configerrors`
 reports a problem. It refuses symlinks at those paths.
 
+Desktop integration is optional. Use `./install.sh --plugin-only` to copy and
+enable the plugin without adding the menu row or keybind.
+
 From a public repository:
 
 ```sh
@@ -38,8 +41,16 @@ omarchy plugin add https://github.com/cfaulkingham/omasnapshot.git --enable
 
 `omarchy plugin add` does not run `install.sh`. Use `--desktop-only` for the
 menu row and keybind after a git install, or add them by hand from the snippets
-below. Gamma post-processing needs the `ffmpeg` package
-(`omarchy pkg add ffmpeg` or `pacman -S ffmpeg`).
+below.
+
+### Optional dependency: ffmpeg
+
+Gamma post-processing needs the `ffmpeg` package, which provides
+`/usr/bin/ffmpeg`. Install it separately using your system's package manager
+if you want gamma adjustments applied to saved files. Without it, photos
+and videos still save, but gamma adjustments are not applied to those files.
+
+OmaSnapshot and `install.sh` do not install, upgrade, or remove system packages.
 
 ## Usage
 
