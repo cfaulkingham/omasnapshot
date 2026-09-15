@@ -14,34 +14,38 @@ gamma".
 
 ## Install
 
+`omarchy plugin add` clones and enables the overlay. It does not add a
+keybind or menu row. Hyprland binds live outside the plugin, so that
+second step is a separate script.
+
+From GitHub:
+
+```sh
+omarchy plugin add https://github.com/cfaulkingham/omasnapshot.git --enable
+~/.config/omarchy/plugins/io.github.cfaulkingham.omasnapshot/install.sh --desktop-only
+```
+
+`--desktop-only` adds **Trigger → Capture → Camera** (shown when a webcam
+is present) and **Super+Alt+C**. Super+Shift+C is already Calendar.
+
 From this folder while developing:
 
 ```sh
 ./install.sh
 ```
 
-That copies the plugin into `~/.config/omarchy/plugins/`, enables it, adds
-**Trigger → Capture → Camera** to the Omarchy menu (when a webcam is present),
-and binds **Super+Alt+C**. Super+Shift+C is already Calendar.
-
-`./install.sh` edits `~/.config/hypr/bindings.lua` and
-`~/.config/omarchy/extensions/omarchy-menu.jsonc` inside uniquely marked
-blocks. It reloads Hyprland and rolls those files back if `hyprctl configerrors`
-reports a problem. It refuses symlinks at those paths.
+That copies the plugin into `~/.config/omarchy/plugins/`, enables it, and
+does the same desktop integration.
 
 Desktop integration is optional. Use `./install.sh --plugin-only` to copy and
 enable the plugin without adding the menu row or keybind.
 
-From a public repository:
+`install.sh` edits `~/.config/hypr/bindings.lua` and
+`~/.config/omarchy/extensions/omarchy-menu.jsonc` inside uniquely marked
+blocks. It reloads Hyprland and rolls those files back if `hyprctl configerrors`
+reports a problem. It refuses symlinks at those paths.
 
-```sh
-omarchy plugin add https://github.com/cfaulkingham/omasnapshot.git --enable
-./install.sh --desktop-only
-```
-
-`omarchy plugin add` does not run `install.sh`. Use `--desktop-only` for the
-menu row and keybind after a git install, or add them by hand from the snippets
-below.
+Or add the menu row and keybind by hand from the snippets below.
 
 ### Optional dependency: ffmpeg
 
@@ -97,12 +101,14 @@ o.bind("SUPER + ALT + C", "OmaSnapshot", "omarchy-shell shell toggle io.github.c
 ## Remove
 
 ```sh
-./install.sh --remove-desktop
+~/.config/omarchy/plugins/io.github.cfaulkingham.omasnapshot/install.sh --remove-desktop
 omarchy plugin remove io.github.cfaulkingham.omasnapshot
 ```
 
-`--remove-desktop` deletes only the marked menu row and Super+Alt+C bind.
-`omarchy plugin remove` deletes the plugin files.
+From this folder, `./install.sh --remove-desktop` is the same. `--remove-desktop`
+deletes only the marked menu row and Super+Alt+C bind. `omarchy plugin remove`
+deletes the plugin files (including `install.sh`), so run `--remove-desktop`
+first.
 
 These stay on disk until you delete them yourself:
 
@@ -110,8 +116,8 @@ These stay on disk until you delete them yourself:
 - Photos and videos already saved under Pictures/Videos (or the OMARCHY_* directories)
 
 If you run `omarchy plugin remove` without `--remove-desktop`, the menu row and
-keybind remain until you run `./install.sh --remove-desktop` or delete those
-marked blocks by hand.
+keybind remain until you restore `install.sh` and run `--remove-desktop`, or
+delete those marked blocks by hand.
 
 ## Test
 
