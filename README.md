@@ -4,9 +4,10 @@
 
 Take a photo or record a video with your webcam from a floating Omarchy overlay.
 
-Opening the overlay starts the camera immediately (including via
-`omarchy-shell shell toggle`). The microphone is used only while a video
-is recording.
+Opening the overlay starts the camera immediately. Click **Camera** on the
+bar, or use the keybind, the Capture menu, or `omarchy-shell shell toggle`
+after the optional desktop integration below. The microphone is used only
+while a video is recording.
 
 Gamma other than 1.00 is written into saved files with `/usr/bin/ffmpeg`.
 Without ffmpeg, captures still save and the overlay shows "Could not apply
@@ -14,14 +15,20 @@ gamma".
 
 ## Install
 
-`omarchy plugin add` clones and enables the overlay. It does not add a
-keybind or menu row. Hyprland binds live outside the plugin, so that
-second step is a separate script.
+`omarchy plugin add --enable` clones the plugin and places a **Camera**
+button on the bar. Click that button to open the overlay. The default
+section is the right side. An interactive add asks which section to use.
 
 From GitHub:
 
 ```sh
 omarchy plugin add https://github.com/cfaulkingham/omasnapshot.git --enable
+```
+
+A keybind and a Capture menu row live in Hyprland and the Omarchy menu, so
+they are a second step:
+
+```sh
 ~/.config/omarchy/plugins/io.github.cfaulkingham.omasnapshot/install.sh --desktop-only
 ```
 
@@ -34,11 +41,19 @@ From this folder while developing:
 ./install.sh
 ```
 
-That copies the plugin into `~/.config/omarchy/plugins/`, enables it, and
-does the same desktop integration.
+That copies the plugin into `~/.config/omarchy/plugins/`, enables it, places
+**Camera** on the bar, and does the same desktop integration.
 
-Desktop integration is optional. Use `./install.sh --plugin-only` to copy and
-enable the plugin without adding the menu row or keybind.
+`./install.sh --plugin-only` copies the plugin, enables it, and places the
+**Camera** button. It leaves the menu row and keybind unchanged.
+
+If an older install enabled the overlay and the Camera button is missing,
+place it with:
+
+```sh
+omarchy plugin disable io.github.cfaulkingham.omasnapshot
+omarchy plugin enable io.github.cfaulkingham.omasnapshot --section right
+```
 
 `install.sh` edits `~/.config/hypr/bindings.lua` and
 `~/.config/omarchy/extensions/omarchy-menu.jsonc` inside uniquely marked
@@ -58,7 +73,7 @@ OmaSnapshot and `install.sh` do not install, upgrade, or remove system packages.
 
 ## Usage
 
-- Open with Super+Alt+C, the Capture menu, or:
+- Open from the **Camera** button on the bar, or with Super+Alt+C, the Capture menu, or:
 
 ```sh
 omarchy-shell shell toggle io.github.cfaulkingham.omasnapshot '{}'
@@ -107,8 +122,8 @@ omarchy plugin remove io.github.cfaulkingham.omasnapshot
 
 From this folder, `./install.sh --remove-desktop` is the same. `--remove-desktop`
 deletes only the marked menu row and Super+Alt+C bind. `omarchy plugin remove`
-deletes the plugin files (including `install.sh`), so run `--remove-desktop`
-first.
+takes the Camera button off the bar and deletes the plugin files (including
+`install.sh`), so run `--remove-desktop` first.
 
 These stay on disk until you delete them yourself:
 

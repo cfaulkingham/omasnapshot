@@ -1,10 +1,12 @@
 #!/usr/bin/bash
 # Install OmaSnapshot on this Omarchy machine:
-#   1. copy the overlay plugin into ~/.config/omarchy/plugins/
-#   2. enable it
+#   1. copy the plugin into ~/.config/omarchy/plugins/
+#   2. enable it, which places the Camera button on the bar
 #   3. add Trigger → Capture → Camera and Super+Alt+C
 #
 # Safe to re-run. --remove-desktop removes only the marked menu and bind blocks.
+# An earlier enable that only listed the plugin under plugins[] does not put
+# the button on the bar; this script disables that entry and places it.
 
 set -euo pipefail
 
@@ -23,6 +25,7 @@ RSYNC=/usr/bin/rsync
 MKDIR=/usr/bin/mkdir
 OMARCHY=/usr/bin/omarchy
 OMARCHY_SHELL=/usr/bin/omarchy-shell
+JQ=/usr/bin/jq
 
 PLUGIN_ONLY=false
 DESKTOP_ONLY=false
@@ -67,12 +70,48 @@ copy_plugin() {
   fi
 }
 
+camera_on_bar() {
+  "$OMARCHY_SHELL" shell listShellConfig | "$JQ" -e --arg id "$PLUGIN_ID" '
+    ((.bar // {}) | (.layout // {}) | [(.left // []), (.center // []), (.right // [])])
+    | add
+    | any(
+        (
+          if type == "object" then (.id // "")
+          elif type == "string" then .
+          else "" end
+        ) == $id
+      )
+  ' >/dev/null
+}
+
+wait_for_bar_widget() {
+  local attempt
+  for (( attempt = 0; attempt < 40; attempt++ )); do
+    if "$OMARCHY" plugin list --json | "$JQ" -e --arg id "$PLUGIN_ID" '
+      any(.[]; .id == $id and ((.kinds // []) | index("bar-widget")))
+    ' >/dev/null; then
+      return 0
+    fi
+    /usr/bin/sleep 0.05
+  done
+  echo "install.sh: $PLUGIN_ID was not rescanned as a bar widget" >&2
+  return 1
+}
+
 enable_plugin() {
   need_exe "$OMARCHY"
-  if [[ -x $OMARCHY_SHELL ]]; then
-    "$OMARCHY_SHELL" shell rescanPlugins >/dev/null 2>&1 || true
-  fi
+  need_exe "$OMARCHY_SHELL"
+  need_exe "$JQ"
+  "$OMARCHY_SHELL" shell rescanPlugins >/dev/null 2>&1 || true
+  wait_for_bar_widget
   "$OMARCHY" plugin enable "$PLUGIN_ID"
+  # A plugin enabled before it had a bar widget sits in plugins[] and a second
+  # enable leaves it there. Drop that entry, then place the button.
+  if camera_on_bar; then
+    return 0
+  fi
+  "$OMARCHY" plugin disable "$PLUGIN_ID"
+  "$OMARCHY" plugin enable "$PLUGIN_ID" --section right
 }
 
 edit_desktop() {
@@ -99,6 +138,7 @@ if ! $DESKTOP_ONLY; then
   copy_plugin
   enable_plugin
   echo "Installed plugin $PLUGIN_ID"
+  echo "Camera is on the bar. Click it to open the overlay."
 fi
 
 if ! $PLUGIN_ONLY; then

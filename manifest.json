@@ -7,10 +7,19 @@
   "license": "MIT",
   "description": "Take a photo or record a video with your webcam from an Omarchy overlay.",
   "kinds": [
-    "overlay"
+    "overlay",
+    "bar-widget"
   ],
   "entryPoints": {
-    "overlay": "Overlay.qml"
+    "overlay": "Overlay.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Camera",
+    "description": "Take a photo or record a video with the webcam",
+    "category": "Tools",
+    "allowMultiple": false,
+    "defaultSection": "right"
   },
   "keywords": [
     "webcam",
